@@ -6,6 +6,10 @@ This project demonstrates how to build, train, tune, and deploy **Artificial Neu
 - 🔴 **Classification** → Predict whether a customer will churn (Yes / No)
 - 🟢 **Regression** → Predict the estimated salary of a customer
 
+**Major Dependencies:**
+- This is built on Python 3.11 -> Make sure you already have installed Python 3.11 in your local. (Due to Tensorflow).
+- Create virtual env of 3.11 python -> **py -3.11 -m venv .venv** (Make sure you have Python installer installed in your local -> To enable working of **py** command).
+
 ---
 
 ## 📁 Project Structure
@@ -556,4 +560,15 @@ streamlit run streamlit_regression.py
 tensorboard --logdir logs/fit/             # For classification
 tensorboard --logdir regressionlogs/fit/   # For regression
 ```
+
+## To run the file :
+Execute in terminal -> **streamlit run app.py/regression.py** according to the problem statement.
+
+
+## To deploy the file : 
+1. Push the code to github.
+2. Open streamlit cloud website. 
+3. Create a new app and choose to deploy it from github.
+4. Provide the details and your .py file which you want to deploy.
+5. Click on deploy -> And it will create your App in your localhost.
 
