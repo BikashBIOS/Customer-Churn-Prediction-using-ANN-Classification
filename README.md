@@ -1129,4 +1129,8 @@ streamlit run main.py
 | **SimpleRNN** | Processes words one-by-one, carrying a "memory" (hidden state) from word to word |
 | **Binary Crossentropy** | Loss function for Yes/No classification |
 | **Sigmoid Output** | Maps final RNN output to a probability between 0 (Negative) and 1 (Positive) |
+<<<<<<< HEAD
 | **EarlyStopping** | Stops training automatically when validation performance stops improving |
+=======
+| **EarlyStopping** | Stops training automatically when validation performance stops improving |
+>>>>>>> 1fde3bb2c22aec7e66e3f4bbdc69892d44771ab9
