@@ -1129,8 +1129,552 @@ streamlit run main.py
 | **SimpleRNN** | Processes words one-by-one, carrying a "memory" (hidden state) from word to word |
 | **Binary Crossentropy** | Loss function for Yes/No classification |
 | **Sigmoid Output** | Maps final RNN output to a probability between 0 (Negative) and 1 (Positive) |
-<<<<<<< HEAD
 | **EarlyStopping** | Stops training automatically when validation performance stops improving |
-=======
-| **EarlyStopping** | Stops training automatically when validation performance stops improving |
->>>>>>> 1fde3bb2c22aec7e66e3f4bbdc69892d44771ab9
+
+
+
+# 🔤 Next Word Prediction Using LSTM
+
+This project builds a **deep learning model** that predicts the next word in a given sequence of words. The model is trained on Shakespeare's *Hamlet* and uses a stacked **LSTM (Long Short-Term Memory)** network — a type of RNN specifically designed to learn long-range dependencies in sequential text.
+
+A **Streamlit web app** lets users type any sequence of words and instantly see the predicted next word.
+
+---
+
+## 📁 Project Structure
+
+```
+├── experiments.ipynb        # Full pipeline — data collection, preprocessing, LSTM training, prediction
+├── app.py                   # Streamlit web app for live next-word prediction
+├── next_word_lstm.h5        # Saved trained LSTM model
+├── tokenizer.pickle         # Saved tokenizer (word ↔ index mappings)
+└── hamlet.txt               # Raw text dataset (Shakespeare's Hamlet)
+```
+
+---
+
+## 📖 Project Overview
+
+| Stage | What happens |
+|---|---|
+| **Data Collection** | Download Shakespeare's *Hamlet* from NLTK's Gutenberg corpus |
+| **Preprocessing** | Tokenize text, build n-gram sequences, pad to uniform length |
+| **Model Building** | Embedding → LSTM → Dropout → LSTM → Dense (Softmax) |
+| **Training** | Train with Early Stopping to avoid overfitting |
+| **Prediction** | Given a phrase, predict the most likely next word |
+| **Deployment** | Streamlit app for real-time prediction in the browser |
+
+---
+
+## 🧠 Key Concepts
+
+| Term | Simple Explanation |
+|---|---|
+| **LSTM** | A special RNN that uses gates to selectively remember or forget information — avoids the vanishing gradient problem of SimpleRNN |
+| **Tokenizer** | Converts every unique word in the text to a unique integer ID |
+| **N-gram Sequence** | A sliding window of words used to create (input, label) training pairs |
+| **Padding** | Adds zeros at the start of shorter sequences so all inputs are the same length |
+| **Softmax Output** | Outputs a probability for every word in the vocabulary — the highest probability word is the prediction |
+| **Categorical Crossentropy** | Loss function for multi-class classification (one correct word out of the entire vocabulary) |
+
+---
+
+---
+
+## 📓 `experiments.ipynb` — Full Training Pipeline
+
+---
+
+### Step 1 — Data Collection: Download Shakespeare's *Hamlet*
+
+```python
+import nltk
+nltk.download('gutenberg')
+from nltk.corpus import gutenberg
+
+# Load Hamlet text from NLTK's built-in Gutenberg corpus
+data = gutenberg.raw('shakespeare-hamlet.txt')
+
+# Save it locally for easy reuse
+with open('hamlet.txt', 'w') as file:
+    file.write(data)
+```
+
+> **NLTK's Gutenberg corpus** contains classic literary texts in the public domain. `gutenberg.raw()` fetches the full plain text of Hamlet as a single string.
+>
+> Saving it to `hamlet.txt` means we only need to download it once and can reload it from disk in future runs.
+
+---
+
+### Step 2 — Load & Tokenize the Text
+
+```python
+import numpy as np
+from tensorflow.keras.preprocessing.text import Tokenizer
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+# Load and lowercase the text
+with open('hamlet.txt', 'r') as file:
+    text = file.read().lower()
+
+# Build the tokenizer — assigns a unique integer to every unique word
+tokenizer = Tokenizer()
+tokenizer.fit_on_texts([text])
+
+# Total unique words in vocabulary (+1 because indices start at 1, not 0)
+total_words = len(tokenizer.word_index) + 1
+```
+
+> `.lower()` ensures `"The"` and `"the"` are treated as the same word — reducing vocabulary size.
+>
+> `Tokenizer.fit_on_texts()` scans the entire text and builds a dictionary: `{"the": 1, "and": 2, "to": 3, ...}` ordered by word frequency. The most common word gets index `1`.
+>
+> `total_words` is the size of our output layer — the model must predict one word out of the entire vocabulary.
+
+```python
+tokenizer.word_index    # View the full word → integer mapping
+```
+
+> Useful to inspect what indices were assigned. For example: `{'the': 1, 'and': 2, 'to': 3, ...}`
+
+---
+
+### Step 3 — Create N-Gram Input Sequences
+
+```python
+input_sequences = []
+
+for line in text.split('\n'):                            # Process one line at a time
+    token_list = tokenizer.texts_to_sequences([line])[0]  # Convert line to list of integers
+    for i in range(1, len(token_list)):
+        n_gram_sequence = token_list[:i+1]               # Take progressively longer slices
+        input_sequences.append(n_gram_sequence)
+```
+
+**Example — how n-grams are built from one line:**
+
+Say the line is `"to be or not"` → token list = `[3, 7, 15, 22]`
+
+| i | n_gram_sequence | Meaning |
+|---|---|---|
+| 1 | `[3, 7]` | Input: `"to"` → Label: `"be"` |
+| 2 | `[3, 7, 15]` | Input: `"to be"` → Label: `"or"` |
+| 3 | `[3, 7, 15, 22]` | Input: `"to be or"` → Label: `"not"` |
+
+> This sliding window technique creates many training examples from a single line. The model learns to predict the **last word** given all **preceding words** in the sequence.
+
+---
+
+### Step 4 — Pad All Sequences to Uniform Length
+
+```python
+# Find the length of the longest sequence in the dataset
+max_sequence_len = max([len(x) for x in input_sequences])
+
+# Pad all shorter sequences with zeros at the start ('pre' padding)
+input_sequences = np.array(pad_sequences(input_sequences, maxlen=max_sequence_len, padding='pre'))
+```
+
+> Since sequences have varying lengths (some 2 tokens, some 100+), `pad_sequences` adds zeros at the **beginning** of shorter sequences so every row is the same length.
+>
+> Example: `[3, 7]` with `maxlen=10` becomes `[0, 0, 0, 0, 0, 0, 0, 0, 3, 7]`
+>
+> Pre-padding (zeros at the start) is preferred over post-padding for text because the **meaningful content stays at the end**, closest to where the model makes its prediction.
+
+---
+
+### Step 5 — Split into Features (X) and Labels (y)
+
+```python
+import tensorflow as tf
+
+# All columns except the last → input words (X)
+# Last column only → the word to predict (y)
+x, y = input_sequences[:, :-1], input_sequences[:, -1]
+```
+
+> `[:, :-1]` selects every column **except** the last — the input word sequence.
+>
+> `[:, -1]` selects only the **last column** — the target word the model must learn to predict.
+>
+> Example row: `[0, 0, 3, 7, 15]` → `x = [0, 0, 3, 7]`, `y = 15`
+
+```python
+# One-hot encode y — convert each integer label to a vector of length total_words
+y = tf.keras.utils.to_categorical(y, num_classes=total_words)
+```
+
+> Since this is multi-class classification (predict 1 word out of the whole vocabulary), `y` must be **one-hot encoded**.
+>
+> For example, if `total_words = 5000` and the target word has index `15`, then `y` becomes a vector of 5000 zeros with a `1` at position `15`. The model is trained to output the highest probability at that exact position.
+
+---
+
+### Step 6 — Train/Test Split
+
+```python
+from sklearn.model_selection import train_test_split
+
+x_train, x_test, y_train, y_test = train_test_split(x, y, test_size=0.2)
+```
+
+> 80% of sequences go to training, 20% to validation. This lets us monitor whether the model is overfitting during training.
+
+---
+
+### Step 7 — Early Stopping
+
+```python
+from tensorflow.keras.callbacks import EarlyStopping
+
+early_stopping = EarlyStopping(monitor='val_loss', patience=3, restore_best_weights=True)
+```
+
+> Stops training if `val_loss` doesn't improve for **3 consecutive epochs** and restores the model to its best-performing state. Prevents the model from memorizing the training text instead of generalizing.
+
+---
+
+### Step 8 — Build the LSTM Model
+
+```python
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout, GRU
+
+model = Sequential()
+model.add(Embedding(total_words, 100, input_length=max_sequence_len - 1))  # Layer 1
+model.add(LSTM(150, return_sequences=True))                                  # Layer 2
+model.add(Dropout(0.2))                                                      # Layer 3
+model.add(LSTM(100))                                                         # Layer 4
+model.add(Dense(total_words, activation='softmax'))                          # Layer 5
+
+model.build(input_shape=(None, max_sequence_len - 1))
+model.summary()
+```
+
+**Architecture breakdown:**
+
+| Layer | Config | Purpose |
+|---|---|---|
+| `Embedding` | vocab size, 100 dims | Maps each word integer to a 100-dimensional dense vector |
+| `LSTM(150)` | return_sequences=True | First LSTM — reads the sequence and passes its full output at every timestep to the next layer |
+| `Dropout(0.2)` | 20% drop rate | Randomly switches off 20% of neurons during training to reduce overfitting |
+| `LSTM(100)` | — | Second LSTM — reads the output from the first LSTM and produces a single context vector |
+| `Dense(total_words)` | softmax | Outputs a probability for every word in the vocabulary |
+
+> **Why two LSTM layers?** Stacking LSTMs allows the model to learn increasingly abstract representations. The first LSTM captures low-level patterns (word pairs, short phrases); the second captures longer-range context.
+>
+> **`return_sequences=True`** on the first LSTM is required because the second LSTM needs a sequence as input, not just the final hidden state.
+>
+> **Dropout** is placed between the two LSTMs — a common practice to regularize recurrent networks without disrupting the sequence flow.
+>
+> **Softmax** turns raw scores into probabilities that sum to 1 across all vocabulary words — enabling us to pick the most likely next word using `argmax`.
+
+---
+
+### Step 9 — Compile the Model
+
+```python
+model.compile(loss='categorical_crossentropy', optimizer='adam', metrics=['accuracy'])
+```
+
+> - **Categorical Crossentropy** — correct loss for multi-class classification where labels are one-hot encoded
+> - **Adam** — adaptive optimizer, works well for NLP tasks
+> - **Accuracy** — tracks what percentage of next-word predictions are exactly correct during training
+
+---
+
+### Step 10 — Train the Model
+
+```python
+history = model.fit(
+    x_train, y_train,
+    epochs=50,
+    validation_data=(x_test, y_test),
+    verbose=1
+)
+```
+
+> Trains for up to 50 epochs. `verbose=1` prints loss and accuracy for every epoch so you can monitor progress. With a large vocabulary like Hamlet's, accuracy may stay low even for a well-performing model — exact word prediction is a very hard task.
+
+---
+
+### Step 11 — Predict the Next Word (in Notebook)
+
+```python
+def predict_next_word(model, tokenizer, text, max_sequence_len):
+    token_list = tokenizer.texts_to_sequences([text])[0]  # Text → integers
+
+    # If input is too long, keep only the last (max_sequence_len - 1) tokens
+    if len(token_list) >= max_sequence_len:
+        token_list = token_list[-(max_sequence_len - 1):]
+
+    # Pad to the required input shape
+    token_list = pad_sequences([token_list], maxlen=max_sequence_len - 1, padding='pre')
+
+    # Get model prediction — a probability vector over all words
+    predicted = model.predict(token_list, verbose=0)
+
+    # Pick the word with the highest probability
+    predicted_word_index = np.argmax(predicted, axis=1)
+
+    # Look up the word that corresponds to this index
+    for word, index in tokenizer.word_index.items():
+        if index == predicted_word_index:
+            return word
+    return None
+```
+
+**Step-by-step what this function does:**
+
+1. Converts input text to a list of integer IDs using the same tokenizer used in training
+2. Trims if the input is longer than the model expects
+3. Pre-pads with zeros to exactly `max_sequence_len - 1` tokens
+4. Runs the model — gets back a probability vector of length `total_words`
+5. `np.argmax` finds the index with the highest probability
+6. Scans the tokenizer's vocabulary to find the word at that index
+
+---
+
+### Step 12 — Test Predictions
+
+```python
+# Example 1
+input_text = "To be or not to be"
+max_sequence_len = model.input_shape[1] + 1
+next_word = predict_next_word(model, tokenizer, input_text, max_sequence_len)
+print(f"Input text: {input_text}")
+print(f"Next Word Prediction: {next_word}")
+
+# Example 2 — longer phrase from Hamlet
+input_text = "Barn. Last night of all, When yond same"
+next_word = predict_next_word(model, tokenizer, input_text, max_sequence_len)
+print(f"Input text: {input_text}")
+print(f"Next Word Prediction: {next_word}")
+```
+
+> `model.input_shape[1] + 1` retrieves the fixed sequence length the model was trained on, so it doesn't need to be hardcoded manually.
+
+---
+
+### Step 13 — Save Model & Tokenizer
+
+```python
+# Save the trained model
+model.save('next_word_lstm.h5')
+
+# Save the tokenizer — must use the same one from training
+import pickle
+with open('tokenizer.pickle', 'wb') as handle:
+    pickle.dump(tokenizer, handle, protocol=pickle.HIGHEST_PROTOCOL)
+```
+
+> Both the model **and** the tokenizer must be saved together. The tokenizer holds the `word → index` mapping — without it, new text can't be encoded the same way it was during training, and predictions will be wrong.
+>
+> `pickle.HIGHEST_PROTOCOL` uses the most efficient binary format available.
+
+---
+
+---
+
+## 🌐 `app.py` — Streamlit Web App
+
+**Goal:** A browser interface where users type any word sequence and get the predicted next word in real time.
+
+---
+
+### Load Model & Tokenizer
+
+```python
+import streamlit as st
+import numpy as np
+import pickle
+from tensorflow.keras.models import load_model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+# Load trained LSTM model
+model = load_model('next_word_lstm.h5')
+
+# Load the saved tokenizer
+with open('tokenizer.pickle', 'rb') as handle:
+    tokenizer = pickle.load(handle)
+```
+
+> The model and tokenizer are loaded once when the app starts. Streamlit keeps them in memory across interactions so every button click doesn't reload them from disk.
+
+---
+
+### Prediction Function
+
+```python
+def predict_next_word(model, tokenizer, text, max_sequence_len):
+    token_list = tokenizer.texts_to_sequences([text])[0]
+
+    # Trim if input exceeds max length
+    if len(token_list) >= max_sequence_len:
+        token_list = token_list[-(max_sequence_len - 1):]
+
+    # Pad to match the model's expected input shape
+    token_list = pad_sequences([token_list], maxlen=max_sequence_len - 1, padding='pre')
+
+    # Predict — returns a probability over the whole vocabulary
+    predicted = model.predict(token_list, verbose=0)
+
+    # Get the index of the highest-probability word
+    predicted_word_index = np.argmax(predicted, axis=1)
+
+    # Map index back to the actual word
+    for word, index in tokenizer.word_index.items():
+        if index == predicted_word_index:
+            return word
+    return None
+```
+
+> This is the same function from `experiments.ipynb`, reused here directly. See Step 11 above for a full line-by-line breakdown.
+
+---
+
+### Streamlit UI
+
+```python
+st.title("Next Word Prediction With LSTM And Early Stopping")
+
+# Text input box — pre-filled with placeholder text
+input_text = st.text_input("Enter the sequence of Words", "Enter the Words")
+```
+
+> `st.text_input()` creates a single-line text field. The second argument `"Enter the Words"` is the **default placeholder** shown before the user types anything.
+
+---
+
+### Predict Button & Output
+
+```python
+if st.button("Predict Next Word"):
+    # Retrieve the sequence length the model was trained with
+    max_sequence_len = model.input_shape[1] + 1
+
+    # Run prediction
+    next_word = predict_next_word(model, tokenizer, input_text, max_sequence_len)
+
+    st.write(f'Next word: {next_word}')
+```
+
+> `model.input_shape[1] + 1` dynamically fetches the correct sequence length from the saved model — no need to hardcode it.
+>
+> When the user clicks **"Predict Next Word"**, the full pipeline runs:
+> 1. Input text → tokenized to integers
+> 2. Trimmed / padded to correct length
+> 3. Model predicts a probability distribution over the vocabulary
+> 4. The word with the highest probability is displayed
+
+**Run the app with:**
+```bash
+streamlit run app.py
+```
+
+---
+
+---
+
+## 🔄 End-to-End Pipeline Summary
+
+```
+Raw Text (Hamlet)
+      ↓
+  lowercase → tokenize (word → integer)
+      ↓
+  build n-gram sequences per line
+      ↓
+  pad all sequences to max_sequence_len
+      ↓
+  split: X = all words except last | y = last word (one-hot)
+      ↓
+  Embedding Layer     →  100-dim vector per word
+      ↓
+  LSTM(150)           →  sequence of hidden states
+      ↓
+  Dropout(0.2)        →  regularization
+      ↓
+  LSTM(100)           →  single context vector
+      ↓
+  Dense (Softmax)     →  probability over entire vocabulary
+      ↓
+  argmax → predicted word index → look up word in tokenizer
+```
+
+---
+
+## 🏗️ Model Architecture Summary
+
+```
+Layer               Output Shape              Parameters
+──────────────────────────────────────────────────────────
+Embedding           (None, seq_len, 100)      total_words × 100
+LSTM (150)          (None, seq_len, 150)       ~150,600
+Dropout (0.2)       (None, seq_len, 150)       0 (no params)
+LSTM (100)          (None, 100)                ~100,400
+Dense (Softmax)     (None, total_words)        100 × total_words
+──────────────────────────────────────────────────────────
+```
+
+> Parameter counts vary based on Hamlet's actual vocabulary size.
+
+---
+
+## 🆚 LSTM vs SimpleRNN — Why LSTM for This Task?
+
+| Feature | SimpleRNN | LSTM |
+|---|---|---|
+| **Memory span** | Short — struggles with sequences > ~10 steps | Long — designed to remember across 100+ steps |
+| **Gates** | None | 3 gates (forget, input, output) control memory |
+| **Vanishing gradient** | Severe problem | Solved by the cell state highway |
+| **Best for** | Short sequences, simple patterns | Long text, complex dependencies |
+| **This project** | ❌ Would lose context over long lines | ✅ Retains context across full lines of Hamlet |
+
+---
+
+## 🚀 Getting Started
+
+### Install Dependencies
+
+```bash
+pip install tensorflow numpy streamlit nltk scikit-learn
+```
+
+### Download the Dataset (First Run Only)
+
+```python
+import nltk
+nltk.download('gutenberg')
+```
+
+### Run the Notebooks in Order
+
+```
+1. experiments.ipynb    ← Full pipeline: collect, preprocess, train, save
+2. streamlit run app.py ← Launch the web app
+```
+
+### Launch the Web App
+
+```bash
+streamlit run app.py
+```
+
+---
+
+## 📌 Key Concepts Recap
+
+| Concept | Simple Explanation |
+|---|---|
+| **N-gram Sequences** | Sliding window approach to generate many (input → next word) training pairs from one line |
+| **Pre-Padding** | Zeros added at the **start** so meaningful content stays at the end — closest to the prediction |
+| **One-Hot Labels** | Each target word becomes a vector of zeros with a single `1` — one class out of the full vocabulary |
+| **return_sequences=True** | First LSTM passes its output at every timestep to the next LSTM layer (not just the final step) |
+| **Dropout** | Randomly disabling neurons during training forces the network to not rely on any single path |
+| **Softmax** | Converts raw scores to probabilities summing to 1 — `argmax` picks the most likely word |
+| **Pickle** | Saves Python objects (like the tokenizer) to disk so word-to-index mappings are preserved exactly |
+
+
+
+
